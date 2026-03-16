@@ -3,21 +3,26 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Deep Space — Warp Drive</title>
+<title>Deep Space — Shooting Stars</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: #000; overflow: hidden; width: 100vw; height: 100vh; }
+  body { background: #000; overflow: hidden; width: 100vw; height: 100vh; touch-action: none; }
   canvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; }
+  #hint {
+    position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%);
+    color: rgba(255,255,255,0.22); font-family: 'Helvetica Neue', sans-serif;
+    font-size: 10px; letter-spacing: 0.5em; text-transform: uppercase;
+    pointer-events: none; z-index: 100;
+    animation: hintFade 7s ease-out forwards;
+  }
+  @keyframes hintFade { 0%{opacity:1} 65%{opacity:1} 100%{opacity:0} }
 </style>
 </head>
 <body>
-<canvas id="bg"></canvas>  <!-- 星雲・背景レイヤー（低頻度更新） -->
-<canvas id="fg"></canvas>  <!-- 星・前景レイヤー（毎フレーム） -->
-
+<canvas id="bg"></canvas>
+<canvas id="fg"></canvas>
+<div id="hint">tap to summon shooting stars</div>
 <script>
-/* ══════════════════════════════════════════════════════
-   キャンバス設定
-══════════════════════════════════════════════════════ */
 const bgC = document.getElementById('bg');
 const fgC = document.getElementById('fg');
 const bg  = bgC.getContext('2d');
@@ -26,416 +31,429 @@ const fg  = fgC.getContext('2d');
 function resize() {
   bgC.width = fgC.width  = window.innerWidth;
   bgC.height= fgC.height = window.innerHeight;
-  buildNebulae();
-  buildDustLanes();
-  renderStaticBG();
+  buildNebulae(); buildDust(); renderBG();
 }
-
 const W = () => fgC.width;
 const H = () => fgC.height;
+const rnd  = (a,b) => a + Math.random()*(b-a);
+const rndI = (a,b) => Math.floor(rnd(a,b));
 
-/* ══════════════════════════════════════════════════════
-   ユーティリティ
-══════════════════════════════════════════════════════ */
-function rnd(a, b) { return a + Math.random() * (b - a); }
-function rndInt(a, b) { return Math.floor(rnd(a, b)); }
-
-/* ══════════════════════════════════════════════════════
-   星の色パレット
-══════════════════════════════════════════════════════ */
-const SCOLORS = [
-  [255,255,255],[255,255,255],[255,255,255],[255,255,255],[255,255,255],
-  [220,235,255],[205,225,255],[185,215,255],[160,200,255],[130,180,255],
-  [255,248,220],[255,235,180],[255,210,140],[255,185,110],
-  [210,255,245],[180,235,255],
+/* ── 星色 ─────────────────────────────────────── */
+const SC = [
+  [255,255,255],[255,255,255],[255,255,255],
+  [220,235,255],[200,220,255],[175,208,255],
+  [255,248,215],[255,228,160],[255,205,120],
+  [195,255,242],[165,228,255],
 ];
 
-/* ══════════════════════════════════════════════════════
-   星雲 (Nebula) — offscreen canvas で事前生成
-══════════════════════════════════════════════════════ */
-const NEBULA_DEFS = [
-  { col:[60,100,255],   alpha:0.22, w:0.7, h:0.55, layers:8  },  // 青い星雲
-  { col:[160,40,255],   alpha:0.18, w:0.55,h:0.65, layers:7  },  // 紫
-  { col:[255,60,100],   alpha:0.15, w:0.6, h:0.45, layers:6  },  // ピンク
-  { col:[0,210,185],    alpha:0.17, w:0.65,h:0.50, layers:7  },  // シアン
-  { col:[255,130,30],   alpha:0.13, w:0.50,h:0.55, layers:6  },  // オレンジ
-  { col:[80,200,255],   alpha:0.20, w:0.72,h:0.48, layers:8  },  // 空色
-  { col:[180,255,150],  alpha:0.11, w:0.48,h:0.60, layers:5  },  // 淡緑
-  { col:[255,200,60],   alpha:0.12, w:0.55,h:0.42, layers:5  },  // 黄金
-  { col:[120,60,255],   alpha:0.19, w:0.62,h:0.58, layers:7  },  // インディゴ
+/* ── 星雲 ────────────────────────────────────── */
+const NDEFS = [
+  {col:[60,100,255], alpha:0.22,w:0.7,h:0.55,layers:8},
+  {col:[160,40,255], alpha:0.18,w:0.55,h:0.65,layers:7},
+  {col:[255,60,100], alpha:0.15,w:0.6,h:0.45,layers:6},
+  {col:[0,210,185],  alpha:0.17,w:0.65,h:0.50,layers:7},
+  {col:[255,130,30], alpha:0.13,w:0.50,h:0.55,layers:6},
+  {col:[80,200,255], alpha:0.20,w:0.72,h:0.48,layers:8},
+  {col:[180,255,150],alpha:0.11,w:0.48,h:0.60,layers:5},
+  {col:[255,200,60], alpha:0.12,w:0.55,h:0.42,layers:5},
+  {col:[120,60,255], alpha:0.19,w:0.62,h:0.58,layers:7},
 ];
-
-const nebulae = [];
-
-function buildNebulae() {
-  nebulae.length = 0;
-  // 4〜6個同時表示、画面の広い範囲に散らばせる
-  const count = 5 + rndInt(0, 2);
-  const shuffled = [...NEBULA_DEFS].sort(() => Math.random()-0.5).slice(0, count);
-  shuffled.forEach((def, i) => {
-    const nw = Math.floor(W() * def.w);
-    const nh = Math.floor(H() * def.h);
-    const oc  = makeNebulaOC(nw, nh, def);
-    // 全画面に散らばせる（クラスター感を出すため少しオフセット）
-    const cx  = W() * (0.1 + (i % 3) * 0.38 + rnd(-0.08, 0.08));
-    const cy  = H() * (0.12 + Math.floor(i/3) * 0.45 + rnd(-0.08, 0.08));
+const nebulae=[];
+function buildNebulae(){
+  nebulae.length=0;
+  [...NDEFS].sort(()=>Math.random()-0.5).slice(0,6).forEach((def,i)=>{
+    const nw=Math.floor(W()*def.w), nh=Math.floor(H()*def.h);
     nebulae.push({
-      oc, nw, nh, cx, cy,
-      z:    rnd(0.3, 0.9),
-      spd:  rnd(0.00006, 0.00018),
-      vx:   rnd(-0.04, 0.04),
-      vy:   rnd(-0.03, 0.03),
-      def,
-      rot:  rnd(0, Math.PI * 2),
-      rotSpd: rnd(-0.0002, 0.0002),
+      oc:makeNebOC(nw,nh,def), nw, nh, def,
+      cx:W()*(0.1+(i%3)*0.38+rnd(-0.08,0.08)),
+      cy:H()*(0.12+Math.floor(i/3)*0.45+rnd(-0.08,0.08)),
+      z:rnd(0.3,0.9), spd:rnd(0.00006,0.00018),
+      vx:rnd(-0.04,0.04), vy:rnd(-0.03,0.03),
+      rot:rnd(0,Math.PI*2), rotSpd:rnd(-0.0002,0.0002),
     });
   });
 }
-
-function makeNebulaOC(nw, nh, def) {
-  const oc  = document.createElement('canvas');
-  oc.width  = nw; oc.height = nh;
-  const c   = oc.getContext('2d');
-  const [r,g,b] = def.col;
-
-  for (let L = 0; L < def.layers; L++) {
-    const lx  = nw/2 + rnd(-nw*0.3, nw*0.3);
-    const ly  = nh/2 + rnd(-nh*0.3, nh*0.3);
-    const rx  = nw * rnd(0.2, 0.45);
-    const ry  = nh * rnd(0.15, 0.40);
-    const rot = rnd(0, Math.PI);
-    const a   = def.alpha * rnd(0.4, 1.0);
-
-    c.save();
-    c.translate(lx, ly);
-    c.rotate(rot);
-    c.scale(1, ry/rx);
-    const grd = c.createRadialGradient(0,0,0, 0,0, rx);
-    grd.addColorStop(0,   `rgba(${r},${g},${b},${a})`);
-    grd.addColorStop(0.4, `rgba(${r},${g},${b},${a*0.45})`);
-    grd.addColorStop(0.75,`rgba(${r},${g},${b},${a*0.12})`);
-    grd.addColorStop(1,   `rgba(${r},${g},${b},0)`);
-    c.beginPath();
-    c.arc(0, 0, rx, 0, Math.PI*2);
-    c.fillStyle = grd;
+function makeNebOC(nw,nh,def){
+  const oc=document.createElement('canvas');
+  oc.width=nw; oc.height=nh;
+  const c=oc.getContext('2d');
+  const [r,g,b]=def.col;
+  for(let L=0;L<def.layers;L++){
+    const lx=nw/2+rnd(-nw*0.3,nw*0.3), ly=nh/2+rnd(-nh*0.3,nh*0.3);
+    const rx=nw*rnd(0.2,0.45), ry=nh*rnd(0.15,0.40);
+    const a=def.alpha*rnd(0.4,1.0);
+    c.save(); c.translate(lx,ly); c.rotate(rnd(0,Math.PI)); c.scale(1,ry/rx);
+    const grd=c.createRadialGradient(0,0,0,0,0,rx);
+    grd.addColorStop(0,`rgba(${r},${g},${b},${a})`);
+    grd.addColorStop(0.4,`rgba(${r},${g},${b},${a*0.45})`);
+    grd.addColorStop(1,`rgba(${r},${g},${b},0)`);
+    c.beginPath(); c.arc(0,0,rx,0,Math.PI*2); c.fillStyle=grd; c.fill(); c.restore();
+  }
+  for(let s=0;s<30;s++){
+    c.beginPath(); c.arc(rnd(nw*0.2,nw*0.8),rnd(nh*0.2,nh*0.8),rnd(0.5,2.5),0,Math.PI*2);
+    c.fillStyle=`rgba(${Math.min(255,r+60)},${Math.min(255,g+60)},${Math.min(255,b+60)},${rnd(0.3,0.7)})`;
     c.fill();
-    c.restore();
-  }
-
-  // 内部に小輝点（星団核のような輝き）
-  for (let s = 0; s < 30; s++) {
-    const sx = rnd(nw*0.2, nw*0.8);
-    const sy = rnd(nh*0.2, nh*0.8);
-    const sr = rnd(0.5, 2.5);
-    c.beginPath();
-    c.arc(sx, sy, sr, 0, Math.PI*2);
-    c.fillStyle = `rgba(${Math.min(255,r+60)},${Math.min(255,g+60)},${Math.min(255,b+60)},${rnd(0.3,0.7)})`;
-    c.fill();
-  }
-
-  return oc;
-}
-
-/* ══════════════════════════════════════════════════════
-   ダストレーン（暗黒星雲 / 宇宙塵）
-══════════════════════════════════════════════════════ */
-const dustLanes = [];
-
-function buildDustLanes() {
-  dustLanes.length = 0;
-  for (let i = 0; i < 5; i++) {
-    const oc = makeDustOC();
-    dustLanes.push({
-      oc,
-      x: rnd(0, W()),
-      y: rnd(0, H()),
-      w: Math.floor(W() * rnd(0.4, 0.85)),
-      h: Math.floor(H() * rnd(0.08, 0.25)),
-      rot: rnd(-0.4, 0.4),
-      alpha: rnd(0.12, 0.28),
-    });
-  }
-}
-
-function makeDustOC() {
-  const oc = document.createElement('canvas');
-  oc.width = 600; oc.height = 120;
-  const c  = oc.getContext('2d');
-  for (let i = 0; i < 8; i++) {
-    const grd = c.createRadialGradient(
-      rnd(100,500), rnd(20,100), 0,
-      rnd(100,500), rnd(20,100), rnd(40,90)
-    );
-    grd.addColorStop(0,   `rgba(0,0,8,${rnd(0.25,0.5)})`);
-    grd.addColorStop(0.6, `rgba(0,0,5,${rnd(0.1,0.2)})`);
-    grd.addColorStop(1,   'rgba(0,0,0,0)');
-    c.fillStyle = grd;
-    c.fillRect(0, 0, 600, 120);
   }
   return oc;
 }
 
-/* ══════════════════════════════════════════════════════
-   静的背景レンダリング（星雲 + ダストレーン）
-══════════════════════════════════════════════════════ */
-let bgFrame = 0;
+const dustLanes=[];
+function buildDust(){
+  dustLanes.length=0;
+  for(let i=0;i<5;i++){
+    const oc=document.createElement('canvas'); oc.width=600; oc.height=120;
+    const c=oc.getContext('2d');
+    for(let j=0;j<8;j++){
+      const grd=c.createRadialGradient(rnd(100,500),rnd(20,100),0,rnd(100,500),rnd(20,100),rnd(40,90));
+      grd.addColorStop(0,`rgba(0,0,8,${rnd(0.25,0.5)})`);
+      grd.addColorStop(0.6,`rgba(0,0,5,${rnd(0.1,0.2)})`);
+      grd.addColorStop(1,'rgba(0,0,0,0)');
+      c.fillStyle=grd; c.fillRect(0,0,600,120);
+    }
+    dustLanes.push({oc, x:rnd(0,W()), y:rnd(0,H()),
+      w:Math.floor(W()*rnd(0.4,0.85)), h:Math.floor(H()*rnd(0.08,0.25)),
+      rot:rnd(-0.4,0.4), alpha:rnd(0.12,0.28)});
+  }
+}
 
-function renderStaticBG() {
-  bg.clearRect(0, 0, W(), H());
-
-  // 深宇宙の暗い青黒グラデーション（放射状）
-  const grd = bg.createRadialGradient(W()/2,H()/2,0, W()/2,H()/2, Math.max(W(),H())*0.72);
-  grd.addColorStop(0,   'rgba(8,14,35,1)');
-  grd.addColorStop(0.4, 'rgba(3,6,20,1)');
-  grd.addColorStop(1,   'rgba(0,0,4,1)');
-  bg.fillStyle = grd;
-  bg.fillRect(0, 0, W(), H());
-
-  // ダストレーン
-  bg.save();
-  bg.globalCompositeOperation = 'multiply';
-  dustLanes.forEach(d => {
-    bg.save();
-    bg.translate(d.x, d.y);
-    bg.rotate(d.rot);
-    bg.globalAlpha = d.alpha;
-    bg.drawImage(d.oc, -d.w/2, -d.h/2, d.w, d.h);
-    bg.restore();
+function renderBG(){
+  bg.clearRect(0,0,W(),H());
+  const grd=bg.createRadialGradient(W()/2,H()/2,0,W()/2,H()/2,Math.max(W(),H())*0.72);
+  grd.addColorStop(0,'rgba(8,14,35,1)');
+  grd.addColorStop(0.4,'rgba(3,6,20,1)');
+  grd.addColorStop(1,'rgba(0,0,4,1)');
+  bg.fillStyle=grd; bg.fillRect(0,0,W(),H());
+  bg.save(); bg.globalCompositeOperation='multiply';
+  dustLanes.forEach(d=>{
+    bg.save(); bg.translate(d.x,d.y); bg.rotate(d.rot);
+    bg.globalAlpha=d.alpha; bg.drawImage(d.oc,-d.w/2,-d.h/2,d.w,d.h); bg.restore();
   });
   bg.restore();
-
-  // 星雲
-  nebulae.forEach(n => {
-    const scale = 0.4 + n.z * 1.2;
-    const dw = n.nw * scale;
-    const dh = n.nh * scale;
-    bg.save();
-    bg.globalCompositeOperation = 'screen';
-    bg.globalAlpha = Math.min(1, n.z * 0.95) * 0.9;
-    bg.translate(n.cx, n.cy);
-    bg.rotate(n.rot);
-    bg.drawImage(n.oc, -dw/2, -dh/2, dw, dh);
-    bg.restore();
+  nebulae.forEach(n=>{
+    const sc=0.4+n.z*1.2, dw=n.nw*sc, dh=n.nh*sc;
+    bg.save(); bg.globalCompositeOperation='screen';
+    bg.globalAlpha=Math.min(1,n.z*0.95)*0.9;
+    bg.translate(n.cx,n.cy); bg.rotate(n.rot);
+    bg.drawImage(n.oc,-dw/2,-dh/2,dw,dh); bg.restore();
   });
 }
 
-/* ══════════════════════════════════════════════════════
-   星
-══════════════════════════════════════════════════════ */
-const STAR_COUNT = 2600;
-const stars = [];
-
-function initStars() {
-  stars.length = 0;
-  for (let i = 0; i < STAR_COUNT; i++) pushStar(true);
+/* ── 背景ワープ星 ──────────────────────────────── */
+const STAR_COUNT=2600;
+const stars=[];
+function initStars(){ stars.length=0; for(let i=0;i<STAR_COUNT;i++) pushStar(true); }
+function pushStar(init){
+  stars.push({
+    angle:rnd(0,Math.PI*2), z:init?Math.random():rnd(0,0.06),
+    speed:rnd(0.0005,0.0028), size:rnd(0.2,2.8),
+    col:SC[rndI(0,SC.length)], bright:rnd(0.45,1.0),
+    ox:rnd(-W()*0.02,W()*0.02), oy:rnd(-H()*0.02,H()*0.02),
+  });
 }
-
-function pushStar(init) {
-  const angle  = rnd(0, Math.PI * 2);
-  const z      = init ? Math.random() : rnd(0, 0.06);
-  const speed  = rnd(0.0005, 0.0028);
-  const size   = rnd(0.2, 2.8);
-  const col    = SCOLORS[rndInt(0, SCOLORS.length)];
-  const bright = rnd(0.45, 1.0);
-  // 放射源を画面中心からわずかにランダムオフセット（自然感）
-  const ox = rnd(-W()*0.02, W()*0.02);
-  const oy = rnd(-H()*0.02, H()*0.02);
-  stars.push({ angle, z, speed, size, col, bright, ox, oy });
+function starXY(s){
+  const r=s.z*s.z*Math.max(W(),H())*0.85;
+  return{x:W()/2+s.ox+Math.cos(s.angle)*r, y:H()/2+s.oy+Math.sin(s.angle)*r};
 }
-
 initStars();
 
-function starXY(s) {
-  const r = s.z * s.z * Math.max(W(), H()) * 0.85;
-  return {
-    x: W()/2 + s.ox + Math.cos(s.angle) * r,
-    y: H()/2 + s.oy + Math.sin(s.angle) * r,
-  };
-}
-
-/* ══════════════════════════════════════════════════════
-   球状星団クラスター
-══════════════════════════════════════════════════════ */
-const clusters = [];
-function initClusters() {
-  clusters.length = 0;
-  for (let c = 0; c < 5; c++) {
-    const cx  = rnd(W()*0.08, W()*0.92);
-    const cy  = rnd(H()*0.08, H()*0.92);
-    const cnt = rndInt(80, 180);
-    const r   = rnd(18, 55);
-    const col = SCOLORS[rndInt(0, SCOLORS.length)];
-    const pts = [];
-    for (let i = 0; i < cnt; i++) {
-      const a = rnd(0, Math.PI*2);
-      const d = Math.pow(Math.random(), 0.45) * r;
-      pts.push({ x: cx+Math.cos(a)*d, y: cy+Math.sin(a)*d, s: rnd(0.2,1.4) });
+const clusters=[];
+function initClusters(){
+  clusters.length=0;
+  for(let c=0;c<5;c++){
+    const cx=rnd(W()*0.08,W()*0.92), cy=rnd(H()*0.08,H()*0.92);
+    const pts=[];
+    const r2=rnd(18,55);
+    for(let i=0;i<rndI(80,180);i++){
+      const a=rnd(0,Math.PI*2), d=Math.pow(Math.random(),0.45)*r2;
+      pts.push({x:cx+Math.cos(a)*d, y:cy+Math.sin(a)*d, s:rnd(0.2,1.4)});
     }
-    clusters.push({ pts, col, alpha: rnd(0.3, 0.6) });
+    clusters.push({pts, col:SC[rndI(0,SC.length)], alpha:rnd(0.3,0.6)});
   }
 }
 initClusters();
 
-/* ══════════════════════════════════════════════════════
-   メインアニメーション
-══════════════════════════════════════════════════════ */
-let frame = 0;
-let bgTimer = 0;
+/* ══════════════════════════════════════════════════
+   流れ星システム
+══════════════════════════════════════════════════ */
+const shootingStars = [];
 
-function animate() {
+/* 流れ星カラーパレット（白・青白・薄黄・薄紫） */
+const METEOR_COLS = [
+  [255,255,255],
+  [220,238,255],
+  [200,225,255],
+  [255,252,220],
+  [230,210,255],
+  [180,220,255],
+];
+
+/*
+  タップ位置を通過するように流れ星を生成する。
+  ・通過方向は斜め（上→下 or 左→右 を基本にランダム角度）
+  ・1タップで2〜4本まとめて発射（バースト感）
+  ・本体：先端グロー＋テール（グラデーションライン）
+  ・スパーク：テールに沿って散るパーティクル
+  ・フレア：通過時に一瞬輝くポイント光
+*/
+function spawnShootingStars(tx, ty) {
+  const count = rndI(2, 5);          // 1タップで2〜4本
+  const baseAngle = rnd(Math.PI*0.15, Math.PI*0.45);  // 斜め下方向を基本に
+
+  for (let n = 0; n < count; n++) {
+    const angle  = baseAngle + rnd(-0.35, 0.35);     // 少しばらける
+    const speed  = rnd(10, 22);
+    const tailLen = rnd(80, 260);
+    const size   = rnd(1.0, 2.8);
+    const col    = METEOR_COLS[rndI(0, METEOR_COLS.length)];
+    const bright = rnd(0.7, 1.0);
+
+    // タップ点が流れ星の中間点付近を通るよう、始点を手前にずらす
+    const offset = tailLen * rnd(0.3, 0.7);
+    const sx = tx - Math.cos(angle) * offset + rnd(-40, 40);
+    const sy = ty - Math.sin(angle) * offset + rnd(-40, 40);
+
+    // スパーク（テール沿いに散る小粒子）
+    const sparks = [];
+    for(let i=0;i<rndI(12,28);i++){
+      sparks.push({
+        life:rnd(0.4,1.0),
+        decay:rnd(0.015,0.04),
+        ox:rnd(-tailLen*0.6, 0),    // テール後方にオフセット
+        oy:rnd(-8, 8),
+        vx:rnd(-1.5, 1.5),
+        vy:rnd(-1.5, 1.5),
+        size:rnd(0.3, 1.4),
+      });
+    }
+
+    shootingStars.push({
+      x:sx, y:sy,
+      vx:Math.cos(angle)*speed,
+      vy:Math.sin(angle)*speed,
+      tailLen,
+      speed,
+      angle,
+      size,
+      col,
+      bright,
+      life:1.0,
+      decay:rnd(0.006, 0.014),
+      sparks,
+      // フレア：出現直後に輝くポイント光
+      flare:{ r:0, maxR:size*18, speed:speed*0.9, alpha:1.0, done:false },
+      // 消滅時に小花火
+      burst:false,
+    });
+  }
+}
+
+function drawShootingStars() {
+  for(let i=shootingStars.length-1; i>=0; i--) {
+    const m = shootingStars[i];
+    if(m.life <= 0){ shootingStars.splice(i,1); continue; }
+
+    const [r,g,b] = m.col;
+    const alpha   = m.life * m.bright;
+
+    // ── テール（グラデーションライン） ──
+    const tx = m.x - Math.cos(m.angle) * m.tailLen * m.life;
+    const ty = m.y - Math.sin(m.angle) * m.tailLen * m.life;
+
+    const grd = fg.createLinearGradient(m.x, m.y, tx, ty);
+    grd.addColorStop(0,   `rgba(${r},${g},${b},${alpha})`);
+    grd.addColorStop(0.08,`rgba(${r},${g},${b},${alpha*0.85})`);
+    grd.addColorStop(0.35,`rgba(${r},${g},${b},${alpha*0.35})`);
+    grd.addColorStop(0.7, `rgba(${r},${g},${b},${alpha*0.08})`);
+    grd.addColorStop(1,   `rgba(${r},${g},${b},0)`);
+
+    fg.beginPath();
+    fg.moveTo(m.x, m.y);
+    fg.lineTo(tx, ty);
+    fg.strokeStyle = grd;
+    fg.lineWidth   = m.size * (0.6 + m.life * 0.8);
+    fg.lineCap     = 'round';
+    fg.stroke();
+
+    // ── テール 副光 (細いハイライト) ──
+    const grd2 = fg.createLinearGradient(m.x, m.y, tx, ty);
+    grd2.addColorStop(0,   `rgba(255,255,255,${alpha*0.9})`);
+    grd2.addColorStop(0.15,`rgba(255,255,255,${alpha*0.4})`);
+    grd2.addColorStop(1,   'rgba(255,255,255,0)');
+    fg.beginPath();
+    fg.moveTo(m.x, m.y);
+    fg.lineTo(tx, ty);
+    fg.strokeStyle = grd2;
+    fg.lineWidth   = m.size * 0.35;
+    fg.stroke();
+
+    // ── 先端グロー ──
+    const hg = fg.createRadialGradient(m.x,m.y,0, m.x,m.y, m.size*5);
+    hg.addColorStop(0,   `rgba(255,255,255,${alpha})`);
+    hg.addColorStop(0.3, `rgba(${r},${g},${b},${alpha*0.6})`);
+    hg.addColorStop(1,   `rgba(${r},${g},${b},0)`);
+    fg.beginPath(); fg.arc(m.x, m.y, m.size*5, 0, Math.PI*2);
+    fg.fillStyle = hg; fg.fill();
+
+    // ── コア白点 ──
+    fg.beginPath(); fg.arc(m.x, m.y, m.size*0.7, 0, Math.PI*2);
+    fg.fillStyle = `rgba(255,255,255,${alpha})`; fg.fill();
+
+    // ── スパーク ──
+    m.sparks.forEach(sp => {
+      if(sp.life<=0) return;
+      // スパークはテール座標系に乗っかる
+      const bx = m.x + Math.cos(m.angle+Math.PI)*(-sp.ox) + sp.vx*( (1-sp.life)*20 );
+      const by = m.y + Math.sin(m.angle+Math.PI)*(-sp.ox) + sp.vy*( (1-sp.life)*20 ) + sp.oy;
+      fg.beginPath(); fg.arc(bx, by, sp.size, 0, Math.PI*2);
+      fg.fillStyle = `rgba(${r},${g},${b},${sp.life*alpha*0.75})`;
+      fg.fill();
+      sp.life -= sp.decay;
+    });
+
+    // ── フレア（出現直後の輝き） ──
+    if(!m.flare.done){
+      const fl=m.flare;
+      const fg2=fg.createRadialGradient(m.x,m.y,0, m.x,m.y,fl.r+1);
+      fg2.addColorStop(0,   `rgba(255,255,255,${fl.alpha*0.7})`);
+      fg2.addColorStop(0.5, `rgba(${r},${g},${b},${fl.alpha*0.3})`);
+      fg2.addColorStop(1,   `rgba(${r},${g},${b},0)`);
+      fg.beginPath(); fg.arc(m.x,m.y,fl.r+1,0,Math.PI*2);
+      fg.fillStyle=fg2; fg.fill();
+      fl.r+=fl.speed; fl.alpha-=0.06;
+      if(fl.r>=fl.maxR||fl.alpha<=0) fl.done=true;
+    }
+
+    // ── 消滅直前に小バースト ──
+    if(m.life<0.12 && !m.burst){
+      m.burst=true;
+      for(let b=0;b<12;b++){
+        const ba=rnd(0,Math.PI*2);
+        shootingStars.push({
+          x:m.x, y:m.y,
+          vx:Math.cos(ba)*rnd(1,4), vy:Math.sin(ba)*rnd(1,4),
+          tailLen:rnd(10,35), speed:rnd(1,4), angle:ba,
+          size:rnd(0.3,0.9), col:m.col, bright:m.bright*0.7,
+          life:rnd(0.3,0.7), decay:rnd(0.03,0.06),
+          sparks:[], flare:{done:true}, burst:true,
+        });
+      }
+    }
+
+    // 移動・フェード
+    m.x += m.vx; m.y += m.vy; m.life -= m.decay;
+  }
+}
+
+/* ── タップ / クリック ──────────────────────────── */
+fgC.addEventListener('click', e => spawnShootingStars(e.clientX, e.clientY));
+fgC.addEventListener('touchstart', e => {
+  e.preventDefault();
+  Array.from(e.changedTouches).forEach(t => spawnShootingStars(t.clientX, t.clientY));
+}, {passive:false});
+
+/* ══════════════════════════════════════════════════
+   メインループ
+══════════════════════════════════════════════════ */
+let frame=0, bgTimer=0;
+
+function animate(){
   requestAnimationFrame(animate);
-  frame++;
-  bgTimer++;
+  frame++; bgTimer++;
 
-  /* ── 星雲を定期的にゆっくり動かす ── */
-  if (bgTimer % 3 === 0) {
-    nebulae.forEach(n => {
-      n.z   += n.spd;
-      n.rot += n.rotSpd;
-      n.cx  += n.vx;
-      n.cy  += n.vy;
-
-      // 画面端を超えたら反対側から
-      if (n.cx < -n.nw) n.cx = W() + n.nw/2;
-      if (n.cx > W()+n.nw) n.cx = -n.nw/2;
-      if (n.cy < -n.nh) n.cy = H() + n.nh/2;
-      if (n.cy > H()+n.nh) n.cy = -n.nh/2;
-
-      // z が遠くなりすぎたらリセット
-      if (n.z > 1.5) {
-        n.z   = rnd(0.05, 0.15);
-        n.cx  = rnd(W()*0.05, W()*0.95);
-        n.cy  = rnd(H()*0.05, H()*0.95);
-        // 新しい星雲を再生成
-        const def = NEBULA_DEFS[rndInt(0, NEBULA_DEFS.length)];
-        const nw  = Math.floor(W() * def.w);
-        const nh  = Math.floor(H() * def.h);
-        n.oc = makeNebulaOC(nw, nh, def);
-        n.nw = nw; n.nh = nh; n.def = def;
+  /* 星雲更新 */
+  if(bgTimer%3===0){
+    nebulae.forEach(n=>{
+      n.z+=n.spd; n.rot+=n.rotSpd; n.cx+=n.vx; n.cy+=n.vy;
+      if(n.cx<-n.nw) n.cx=W()+n.nw/2;
+      if(n.cx>W()+n.nw) n.cx=-n.nw/2;
+      if(n.cy<-n.nh) n.cy=H()+n.nh/2;
+      if(n.cy>H()+n.nh) n.cy=-n.nh/2;
+      if(n.z>1.5){
+        n.z=rnd(0.05,0.15); n.cx=rnd(W()*0.05,W()*0.95); n.cy=rnd(H()*0.05,H()*0.95);
+        const def=NDEFS[rndI(0,NDEFS.length)];
+        const nw=Math.floor(W()*def.w), nh=Math.floor(H()*def.h);
+        n.oc=makeNebOC(nw,nh,def); n.nw=nw; n.nh=nh;
       }
     });
-    renderStaticBG();
+    renderBG();
   }
 
-  /* ── 前景クリア（モーションブラー） ── */
-  fg.fillStyle = 'rgba(0,0,6, 0.48)';
-  fg.fillRect(0, 0, W(), H());
+  /* 前景クリア */
+  fg.fillStyle='rgba(0,0,6,0.48)';
+  fg.fillRect(0,0,W(),H());
 
-  /* ── 球状星団 ── */
-  fg.save();
-  fg.globalCompositeOperation = 'screen';
-  clusters.forEach(cl => {
-    const [r,g,b] = cl.col;
-    cl.pts.forEach(p => {
-      fg.beginPath();
-      fg.arc(p.x, p.y, p.s, 0, Math.PI*2);
-      fg.fillStyle = `rgba(${r},${g},${b},${cl.alpha})`;
-      fg.fill();
+  /* 星団 */
+  fg.save(); fg.globalCompositeOperation='screen';
+  clusters.forEach(cl=>{
+    const [r,g,b]=cl.col;
+    cl.pts.forEach(p=>{
+      fg.beginPath(); fg.arc(p.x,p.y,p.s,0,Math.PI*2);
+      fg.fillStyle=`rgba(${r},${g},${b},${cl.alpha})`; fg.fill();
     });
   });
   fg.restore();
 
-  /* ── 中心グロー ── */
-  const cx = W()/2, cy = H()/2;
-  const pulse = 0.10 + Math.sin(frame * 0.018) * 0.04;
-  const cg = fg.createRadialGradient(cx,cy,0, cx,cy, Math.min(W(),H())*0.38);
-  cg.addColorStop(0,   `rgba(255,175,145,${pulse+0.06})`);
+  /* 中心グロー */
+  const cx=W()/2, cy=H()/2;
+  const pulse=0.10+Math.sin(frame*0.018)*0.04;
+  const cg=fg.createRadialGradient(cx,cy,0,cx,cy,Math.min(W(),H())*0.38);
+  cg.addColorStop(0,`rgba(255,175,145,${pulse+0.06})`);
   cg.addColorStop(0.18,`rgba(200,160,255,${pulse})`);
-  cg.addColorStop(0.5, `rgba(60,80,200,${pulse*0.5})`);
-  cg.addColorStop(1,   'rgba(0,0,0,0)');
-  fg.fillStyle = cg;
-  fg.fillRect(0, 0, W(), H());
+  cg.addColorStop(0.5,`rgba(60,80,200,${pulse*0.5})`);
+  cg.addColorStop(1,'rgba(0,0,0,0)');
+  fg.fillStyle=cg; fg.fillRect(0,0,W(),H());
 
-  /* ── 星を描く ── */
-  for (let i = stars.length-1; i >= 0; i--) {
-    const s   = stars[i];
-    const pos = starXY(s);
-
-    // 画面外 → リセット
-    if (pos.x < -30||pos.x > W()+30||pos.y < -30||pos.y > H()+30) {
-      stars.splice(i, 1);
-      pushStar(false);
-      continue;
+  /* ワープ星 */
+  for(let i=stars.length-1;i>=0;i--){
+    const s=stars[i], pos=starXY(s);
+    if(pos.x<-30||pos.x>W()+30||pos.y<-30||pos.y>H()+30){ stars.splice(i,1); pushStar(false); continue; }
+    const zf=Math.min(1,s.z*1.5), alpha=zf*s.bright, radius=s.size*(0.2+s.z*2.0);
+    const [r,g,b]=s.col;
+    if(s.z>0.06){
+      const pz=Math.max(0,s.z-s.speed*6), pr=pz*pz*Math.max(W(),H())*0.85;
+      const px=W()/2+s.ox+Math.cos(s.angle)*pr, py=H()/2+s.oy+Math.sin(s.angle)*pr;
+      fg.beginPath(); fg.moveTo(px,py); fg.lineTo(pos.x,pos.y);
+      fg.strokeStyle=`rgba(${r},${g},${b},${alpha*0.52*Math.min(1,(s.z-0.06)*2.8)})`;
+      fg.lineWidth=radius*0.48; fg.lineCap='round'; fg.stroke();
     }
-
-    const zf     = Math.min(1, s.z * 1.5);
-    const alpha  = zf * s.bright;
-    const radius = s.size * (0.2 + s.z * 2.0);
-    const [r,g,b] = s.col;
-
-    // ストリーク
-    if (s.z > 0.06) {
-      const pz = Math.max(0, s.z - s.speed * 6);
-      const pr = pz*pz * Math.max(W(),H()) * 0.85;
-      const px = W()/2 + s.ox + Math.cos(s.angle)*pr;
-      const py = H()/2 + s.oy + Math.sin(s.angle)*pr;
-      const sl = Math.min(1, (s.z-0.06)*2.8);
-      fg.beginPath();
-      fg.moveTo(px, py);
-      fg.lineTo(pos.x, pos.y);
-      fg.strokeStyle = `rgba(${r},${g},${b},${alpha*0.52*sl})`;
-      fg.lineWidth   = radius * 0.48;
-      fg.lineCap     = 'round';
-      fg.stroke();
+    if(s.z>0.025){
+      const gs=radius*3.2;
+      const sg=fg.createRadialGradient(pos.x,pos.y,0,pos.x,pos.y,gs);
+      sg.addColorStop(0,`rgba(${r},${g},${b},${alpha*0.9})`);
+      sg.addColorStop(0.3,`rgba(${r},${g},${b},${alpha*0.28})`);
+      sg.addColorStop(1,`rgba(${r},${g},${b},0)`);
+      fg.beginPath(); fg.arc(pos.x,pos.y,gs,0,Math.PI*2); fg.fillStyle=sg; fg.fill();
+      fg.beginPath(); fg.arc(pos.x,pos.y,Math.max(0.4,radius*0.6),0,Math.PI*2);
+      fg.fillStyle=`rgba(${r},${g},${b},${alpha})`; fg.fill();
     }
-
-    // グロー + コア
-    if (s.z > 0.025) {
-      const gs = radius * 3.2;
-      const sg = fg.createRadialGradient(pos.x,pos.y,0, pos.x,pos.y,gs);
-      sg.addColorStop(0,   `rgba(${r},${g},${b},${alpha*0.9})`);
-      sg.addColorStop(0.3, `rgba(${r},${g},${b},${alpha*0.28})`);
-      sg.addColorStop(1,   `rgba(${r},${g},${b},0)`);
-      fg.beginPath();
-      fg.arc(pos.x, pos.y, gs, 0, Math.PI*2);
-      fg.fillStyle = sg;
-      fg.fill();
-
-      fg.beginPath();
-      fg.arc(pos.x, pos.y, Math.max(0.4, radius*0.6), 0, Math.PI*2);
-      fg.fillStyle = `rgba(${r},${g},${b},${alpha})`;
-      fg.fill();
-    }
-
-    // 明るい星の光芒（4本＋斜め4本）
-    if (s.size > 1.8 && s.z > 0.42) {
-      const len  = radius * 9 * s.z;
-      const la   = alpha * 0.42 * Math.min(1,(s.z-0.42)*2.2);
-      fg.strokeStyle = `rgba(${r},${g},${b},${la})`;
-      fg.lineWidth   = 0.5;
-      // 十字
+    if(s.size>1.8&&s.z>0.42){
+      const len=radius*9*s.z, la=alpha*0.42*Math.min(1,(s.z-0.42)*2.2);
+      fg.strokeStyle=`rgba(${r},${g},${b},${la})`; fg.lineWidth=0.5;
       fg.beginPath(); fg.moveTo(pos.x-len,pos.y); fg.lineTo(pos.x+len,pos.y); fg.stroke();
       fg.beginPath(); fg.moveTo(pos.x,pos.y-len); fg.lineTo(pos.x,pos.y+len); fg.stroke();
-      // 斜め（短め）
-      const dl = len*0.55;
-      fg.strokeStyle = `rgba(${r},${g},${b},${la*0.45})`;
+      const dl=len*0.55; fg.strokeStyle=`rgba(${r},${g},${b},${la*0.45})`;
       fg.beginPath(); fg.moveTo(pos.x-dl,pos.y-dl); fg.lineTo(pos.x+dl,pos.y+dl); fg.stroke();
       fg.beginPath(); fg.moveTo(pos.x+dl,pos.y-dl); fg.lineTo(pos.x-dl,pos.y+dl); fg.stroke();
     }
-
-    s.z += s.speed;
+    s.z+=s.speed;
   }
 
-  /* ── ビネット ── */
-  const vR  = Math.max(W(),H()) * 0.82;
-  const vig = fg.createRadialGradient(cx,cy,vR*0.22, cx,cy,vR);
-  vig.addColorStop(0, 'rgba(0,0,0,0)');
-  vig.addColorStop(1, 'rgba(0,1,12,0.90)');
-  fg.fillStyle = vig;
-  fg.fillRect(0, 0, W(), H());
+  /* 流れ星描画 */
+  fg.save();
+  fg.globalCompositeOperation = 'screen';
+  drawShootingStars();
+  fg.restore();
+
+  /* ビネット */
+  const vR=Math.max(W(),H())*0.82;
+  const vig=fg.createRadialGradient(cx,cy,vR*0.22,cx,cy,vR);
+  vig.addColorStop(0,'rgba(0,0,0,0)');
+  vig.addColorStop(1,'rgba(0,1,12,0.90)');
+  fg.fillStyle=vig; fg.fillRect(0,0,W(),H());
 }
 
-/* ══════════════════════════════════════════════════════
-   初期化
-══════════════════════════════════════════════════════ */
-resize();
-initStars();
-animate();
-window.addEventListener('resize', () => {
-  resize();
-  initStars();
-  initClusters();
-});
+resize(); initStars(); initClusters(); animate();
+window.addEventListener('resize',()=>{ resize(); initStars(); initClusters(); });
 </script>
 </body>
 </html>
